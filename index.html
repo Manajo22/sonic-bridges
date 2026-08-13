@@ -61,7 +61,7 @@
     -webkit-text-size-adjust:100%;
   }
   /* canvases must not scroll/zoom the page while drawing on touch devices */
-  #drawCanvas,#tDraw,#tTemplate,#gVideo,#sVideo,.video-box,.draw-box,
+  #drawCanvas,#tDraw,#tTemplate,#gVideo,#sVideo,#liveVideo,#liveCanvas,.live-slot,.video-box,.draw-box,
   .pg-canvas,#pgDraw,#pgOverlay,.pg-stage,.playground{ touch-action:none; }
   * { -webkit-tap-highlight-color: transparent; }
   /* stop iPad rubber-band / page bounce while dragging on a canvas */
@@ -497,6 +497,9 @@
   <div id="kbKeys"></div>
 </div>
 <div class="toast" id="toast"></div>
+<!-- persistent home for the single live camera element so re-renders never
+     destroy/recreate the <video> (which black-screens the stream on iPad) -->
+<div id="liveStore" style="position:absolute;width:0;height:0;overflow:hidden;left:-9999px;top:-9999px;"></div>
 
 <script>
 /* =====================================================================
@@ -633,8 +636,8 @@ function ac(){
        of the tanpura on iPad) so nothing clips harshly */
     LIMITER = AC.createDynamicsCompressor();
     try{
-      LIMITER.threshold.value=-6; LIMITER.knee.value=6; LIMITER.ratio.value=12;
-      LIMITER.attack.value=0.003; LIMITER.release.value=0.25;
+      LIMITER.threshold.value=-1.5; LIMITER.knee.value=0; LIMITER.ratio.value=20;
+      LIMITER.attack.value=0.002; LIMITER.release.value=0.2;
     }catch(e){}
     MASTER.connect(LIMITER); LIMITER.connect(AC.destination);
     /* per-instrument buses keep each layer at a steady, predictable level */
@@ -751,62 +754,22 @@ const TAALS = {
   ektaal:  {beats:12, accents:[0,2,6,10], khali:[4,8], bpm:76}
 };
 let taalTimer=null, taalNext=0, taalBeat=0;
-/* A tabla stroke, modelled in three layers so it reads as a real drum:
-     1) a short finger-strike transient,
-     2) the dayan (treble) RING — a pitched membrane with INHARMONIC partials
-        and a slight pitch drop, which is what gives tabla its metallic "tun",
-     3) the bayan (bass) BOOM with a downward pitch-bend (the "gharaj" heel
-        modulation) — only on the strong/accented strokes (Dha / Dhin).
-   kinds: 'sam' = strongest downbeat (Dha), 'tali' = accented (Dhin),
-          'beat' = plain stroke (Na/Tun), 'khali' = open/empty (dry Tin). */
 function tabla(t0, kind){
   const c=ac();
-  const bus = TAALBUS || MASTER;
-
-  /* 1) strike transient — a quick high-passed noise tick */
-  (function(){
-    const nlen=Math.max(1,Math.floor(c.sampleRate*0.02));
-    const buf=c.createBuffer(1,nlen,c.sampleRate), d=buf.getChannelData(0);
-    for(let i=0;i<nlen;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/nlen,2.4);
-    const src=c.createBufferSource(); src.buffer=buf;
-    const hp=c.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=1300;
-    const g=c.createGain(); g.gain.value=(kind==='khali'?0.07:0.11);
-    src.connect(hp); hp.connect(g); g.connect(bus); src.start(t0);
-  })();
-
-  /* 2) dayan ring — inharmonic partials + short pitch drop */
-  const pitch   = kind==='sam'?300 : kind==='khali'?250 : 320;
-  const ringAmp = kind==='sam'?0.18 : kind==='tali'?0.14 : kind==='khali'?0.05 : 0.13;
-  const ringDur = kind==='khali'?0.13 : 0.55;     /* closed = damped, open = rings on */
-  const partials=[[1,1.0],[2.36,0.5],[3.9,0.28],[5.4,0.14]];
-  const ringOut=c.createGain(); ringOut.gain.value=1; ringOut.connect(bus);
-  partials.forEach(function(p){
-    const o=c.createOscillator(); o.type='sine';
-    o.frequency.setValueAtTime(pitch*p[0], t0);
-    o.frequency.exponentialRampToValueAtTime(pitch*p[0]*0.86, t0+0.12);
-    const g=c.createGain(); const a=Math.max(0.0002, ringAmp*p[1]);
-    g.gain.setValueAtTime(0.0001,t0);
-    g.gain.exponentialRampToValueAtTime(a, t0+0.004);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0+ringDur);
-    o.connect(g); g.connect(ringOut);
-    o.start(t0); o.stop(t0+ringDur+0.05);
-  });
-
-  /* 3) bayan boom — deep, pitch-bending bass on the accented strokes only */
-  if(kind==='sam' || kind==='tali'){
-    const bf   = kind==='sam'?102:120;
-    const bamp = kind==='sam'?0.24:0.15;
-    const bass=c.createOscillator(); bass.type='sine';
-    bass.frequency.setValueAtTime(bf, t0);
-    bass.frequency.exponentialRampToValueAtTime(bf*0.5, t0+0.22);
-    const bg=c.createGain();
-    bg.gain.setValueAtTime(0.0001,t0);
-    bg.gain.exponentialRampToValueAtTime(bamp, t0+0.01);
-    bg.gain.exponentialRampToValueAtTime(0.0001, t0+0.5);
-    const lp=c.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=340;
-    bass.connect(bg); bg.connect(lp); lp.connect(bus);
-    bass.start(t0); bass.stop(t0+0.55);
-  }
+  const f = kind==='sam'?230: kind==='khali'?150:190;
+  const o=c.createOscillator(), g=c.createGain();
+  o.type='sine'; o.frequency.setValueAtTime(f,t0);
+  o.frequency.exponentialRampToValueAtTime(f*0.55,t0+0.16);
+  const amp = kind==='sam'?0.20: kind==='khali'?0.075:0.12;
+  g.gain.setValueAtTime(0.0001,t0); g.gain.exponentialRampToValueAtTime(amp,t0+0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+0.30);
+  o.connect(g); g.connect(MASTER); o.start(t0); o.stop(t0+0.34);
+  const len=Math.floor(c.sampleRate*0.03), buf=c.createBuffer(1,len,c.sampleRate), dta=buf.getChannelData(0);
+  for(let i=0;i<len;i++) dta[i]=(Math.random()*2-1)*Math.pow(1-i/len,3);
+  const src=c.createBufferSource(); src.buffer=buf;
+  const bg=c.createGain(); bg.gain.value = kind==='khali'?0.05:0.09;
+  const bp=c.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=2100; bp.Q.value=1.1;
+  src.connect(bp); bp.connect(bg); bg.connect(MASTER); src.start(t0);
 }
 function taalStart(){
   taalStop();
@@ -816,14 +779,10 @@ function taalStart(){
   taalTimer=setInterval(function(){
     const c2=TAALS[state.settings.taal]; if(!c2){ taalStop(); return; }
     const now=ac().currentTime;
-    /* re-anchor if the timer stalled, so a caught-up scheduler never fires a
-       burst of beats at once (the "volume jump" symptom on iPad) */
-    if(taalNext < now){ taalNext = now + 0.05; }
-    let guard=0;
-    while(taalNext < now+1.2 && guard<8){
+    while(taalNext < now+1.2){
       const b=taalBeat%c2.beats;
       tabla(taalNext, b===0?'sam':(c2.khali.indexOf(b)>=0?'khali':(c2.accents.indexOf(b)>=0?'tali':'beat')));
-      taalNext += spb; taalBeat++; guard++;
+      taalNext += spb; taalBeat++;
     }
   },250);
 }
@@ -1322,29 +1281,72 @@ function drawSkeleton(ctx,lms,w,h,color){
   });
   lms.forEach(function(p){ ctx.beginPath(); ctx.arc(p.x*w,p.y*h,3.2,0,Math.PI*2); ctx.fill(); });
 }
-function attachLiveView(videoId, canvasId, which){
-  const video=document.getElementById(videoId), canvas=document.getElementById(canvasId);
-  if(!video||!canvas||!cameraStream) return;
-  video.srcObject=cameraStream; video.play().catch(function(){});
-  const ctx=canvas.getContext('2d');
-  if(which==='mentor' && rafMentor) cancelAnimationFrame(rafMentor);
-  if(which==='student' && rafStudent) cancelAnimationFrame(rafStudent);
-  function draw(){
-    const w=video.videoWidth||640, h=video.videoHeight||480;
-    if(canvas.width!==w) canvas.width=w;
-    if(canvas.height!==h) canvas.height=h;
-    ctx.clearRect(0,0,w,h);
-    if(lastResults && lastResults.multiHandLandmarks){
-      lastResults.multiHandLandmarks.forEach(function(lm,i){ drawSkeleton(ctx,lm,w,h,HAND_COLORS[i%2]); });
-    }
+/* ---------------------------------------------------------------------
+   ONE persistent camera element, reused everywhere.
+   Re-rendering the card wipes ov.innerHTML, so instead of rebuilding a
+   <video> each time (which re-binds the MediaStream and black-screens on
+   iPad), we keep a single <video>+<canvas> alive in #liveStore and simply
+   MOVE it into whichever slot the current view exposes. Moving a DOM node
+   does not interrupt playback, so the camera + hand results stay rock steady
+   through gesture takes, act and speak.
+   --------------------------------------------------------------------- */
+let liveHolder=null, liveLoopRaf=null, liveLoopWhich=null;
+function ensureLiveHolder(){
+  if(liveHolder) return liveHolder;
+  liveHolder=document.createElement('div');
+  liveHolder.className='video-inner';
+  liveHolder.innerHTML='<video id="liveVideo" muted playsinline autoplay></video><canvas id="liveCanvas"></canvas>';
+  document.getElementById('liveStore').appendChild(liveHolder);
+  return liveHolder;
+}
+/* park the camera element back in the hidden store so an ov.innerHTML reset
+   can't delete it */
+function parkLive(){
+  if(!liveHolder) return;
+  const store=document.getElementById('liveStore');
+  if(liveHolder.parentElement!==store) store.appendChild(liveHolder);
+}
+/* move the camera element into the given slot and make sure it's playing +
+   the recognition/skeleton loop is running */
+function mountLive(slotSelector, which){
+  if(!cameraStream) return;
+  const slot=document.querySelector(slotSelector);
+  if(!slot) return;
+  const holder=ensureLiveHolder();
+  if(holder.parentElement!==slot) slot.appendChild(holder);
+  const video=document.getElementById('liveVideo');
+  if(video){
+    if(video.srcObject!==cameraStream) video.srcObject=cameraStream;
+    video.play().catch(function(){});
   }
+  startLiveLoop(which);
+}
+function startLiveLoop(which){
+  liveLoopWhich=which;
+  if(liveLoopRaf) return;   /* already looping; just updated which */
   async function loop(){
-    if(video.readyState>=2 && handsModel){ try{ await handsModel.send({image:video}); }catch(e){} }
-    draw();
-    if(which==='student') liveRecognise();
-    if(which==='mentor') rafMentor=requestAnimationFrame(loop); else rafStudent=requestAnimationFrame(loop);
+    const v=document.getElementById('liveVideo');
+    if(!v){ liveLoopRaf=null; return; }
+    if(v.readyState>=2 && handsModel){ try{ await handsModel.send({image:v}); }catch(e){} }
+    const cv=document.getElementById('liveCanvas');
+    if(cv){
+      const w=v.videoWidth||640, h=v.videoHeight||480;
+      if(cv.width!==w) cv.width=w;
+      if(cv.height!==h) cv.height=h;
+      const cx=cv.getContext('2d'); cx.clearRect(0,0,w,h);
+      if(lastResults && lastResults.multiHandLandmarks){
+        lastResults.multiHandLandmarks.forEach(function(lm,i){ drawSkeleton(cx,lm,w,h,HAND_COLORS[i%2]); });
+      }
+    }
+    if(liveLoopWhich==='student') liveRecognise();
+    liveLoopRaf=requestAnimationFrame(loop);
   }
-  loop();
+  liveLoopRaf=requestAnimationFrame(loop);
+}
+function stopLiveLoop(){ if(liveLoopRaf){ cancelAnimationFrame(liveLoopRaf); liveLoopRaf=null; } liveLoopWhich=null; }
+/* legacy shim: some call sites still ask for the old attach by id */
+function attachLiveView(videoId, canvasId, which){
+  mountLive('.live-slot', which);
 }
 
 /* ---- gesture matching on FINGER POSE, not hand position ----
@@ -1462,7 +1464,7 @@ function thumbFromFrames(frames){
 
 function grabVideoPhoto(){
   try{
-    const v=document.getElementById('gVideo');
+    const v=document.getElementById('liveVideo');
     if(!v||!v.videoWidth) return null;
     const c=document.createElement('canvas');
     /* keep it reasonably small for the PDF */
@@ -1479,6 +1481,7 @@ function grabVideoPhoto(){
 function runTakeSequence(){
   if(state.capturing || !cameraStream || !handsModel) return;
   state.capturing = true;
+  state.manualOpenStep = 'gesture';   /* stay on the gesture panel through all 3 takes */
   const w = cw();
   w.gestureCaptures = [null,null,null];
   let slot = 0;
@@ -1620,23 +1623,24 @@ function render(){
     document.getElementById('cardPath').setAttribute('d','');
     html += renderStudent();
   }
+  /* keep the persistent camera element safe from the innerHTML reset */
+  parkLive();
   ov.innerHTML = html;
 
   /* post-render wiring */
   if(state.mode==='mentor'){
     const w = cw();
     const step = state.manualOpenStep || naturalStep(w);
-    if(step!=='gesture' && rafMentor){ cancelAnimationFrame(rafMentor); rafMentor=null; }
-    if(step==='gesture' && cameraStream) attachLiveView('gVideo','gCanvas','mentor');
+    if(step==='gesture' && cameraStream) mountLive('.live-slot','mentor');
+    else stopLiveLoop();
     if(step==='drawing') setupDrawCanvas();
     const ta = document.getElementById('wordInput');
     if(ta){ ta.focus(); try{ ta.setSelectionRange(ta.value.length, ta.value.length); }catch(e){} }
   } else {
-    if(rafMentor){ cancelAnimationFrame(rafMentor); rafMentor=null; }
     const md = state.student.mode;
     const live = (md==='act'||md==='speak');
-    if(!live && rafStudent){ cancelAnimationFrame(rafStudent); rafStudent=null; }
-    if(live && cameraStream) attachLiveView('sVideo','sCanvas','student');
+    if(live && cameraStream) mountLive('.live-slot','student');
+    else stopLiveLoop();
     if(md==='draw'||md==='write') setupTrace();
     /* Speak mode must always be actively listening while it's on screen.
        If recognition isn't running (first show, re-render, or it silently
@@ -1758,7 +1762,7 @@ function renderContent(){
       const captured=w.gestureCaptures.filter(Boolean).length;
       let inner;
       if(cameraStream){
-        inner = '<div class="video-inner"><video id="gVideo" muted playsinline></video><canvas id="gCanvas"></canvas></div>'
+        inner = '<div class="live-slot" style="position:absolute;inset:0;"></div>'
           + (state.countdown>0 ? '<div class="video-badge">'+state.countdown+'</div>'
              : (state.capturing?'<div class="video-badge" style="background:#e33;color:#fff;border-color:#e33">\u25cf</div>':''));
       } else if(camStarting){
@@ -2057,14 +2061,14 @@ function studentCard(entry, md, wave){
   let left='';
   if(s.mode==='act'){
     left = cameraStream
-      ? '<div class="video-inner"><video id="sVideo" muted playsinline></video><canvas id="sCanvas"></canvas></div>'
+      ? '<div class="live-slot" style="position:absolute;inset:0;"></div>'
       : '<div class="cam-prompt">'+svgIcon('camera',20,'#000')
         +'<button class="ghostbtn" data-action="camera" style="padding:7px 15px;font-size:12px;">Start camera</button></div>';
   } else if(s.mode==='speak'){
     /* camera view with a Hear-it-again pill and a live caption, per the ref */
     const cap = state.student.speakCaption || 'Speak now\u2026';
     const inner = cameraStream
-      ? '<div class="video-inner"><video id="sVideo" muted playsinline></video><canvas id="sCanvas"></canvas></div>'
+      ? '<div class="live-slot" style="position:absolute;inset:0;"></div>'
       : '<div class="cam-prompt">'+svgIcon('camera',20,'#000')
         +'<button class="ghostbtn" data-action="camera" style="padding:7px 15px;font-size:12px;">Start camera</button></div>';
     left = '<div class="speak-stage">'
@@ -2906,6 +2910,8 @@ function pgPlay(semi, dur, amp){
 
 function openPlayground(){
   ac();
+  stopLiveLoop();   /* hand the camera/hand-model over to the playground's own loop */
+  parkLive();
   PG.open=true; PG.typed=''; PG.mode='act';
   document.getElementById('playground').classList.add('open');
   renderPlayground();
@@ -2916,6 +2922,7 @@ function closePlayground(){
   if(PG.rec){ try{ PG.rec.onend=null; PG.rec.stop(); }catch(e){} PG.rec=null; }
   stopDrone();
   document.getElementById('playground').classList.remove('open');
+  render();   /* re-mount the main camera view if the card needs it */
 }
 
 /* ---------- Info overlay (sheets 1-4 as a scrollable document) ---------- */
