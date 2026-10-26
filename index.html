@@ -174,16 +174,17 @@
 
   /* gesture */
   .video-box{position:absolute;border:1.05732px solid #000;border-radius:7.93px;overflow:hidden;background:#D9D3C0;}
-  /* Camera is shown UN-mirrored (natural orientation) everywhere — no scaleX.
-     Removing the transform also fixes iOS Safari, which won't apply object-fit to
-     a <video> inside a CSS-transformed ancestor (that bug made the camera show at
-     its native size in a corner while the skeleton filled the box). */
+  /* Camera is MIRRORED (selfie view) so raising your right hand appears on the
+     right — the natural, correct feel for gesturing. The mirror is put on the
+     media ELEMENTS, not an ancestor: object-fit is computed first (so the video
+     fills the box) and only the painted result is flipped, which sidesteps the
+     iOS Safari bug where object-fit is ignored inside a transformed ancestor. */
   .video-inner{position:absolute;inset:0;}
   .video-inner video,.video-inner canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
   #liveVideo,#liveCanvas,#liveVideo1,#liveCanvas1{
     position:absolute !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;
     width:100% !important;height:100% !important;object-fit:cover !important;display:block !important;
-    transform:none !important;}
+    transform:scaleX(-1) !important;}
   .video-badge{
     position:absolute;left:8px;top:8px;width:26px;height:26px;border-radius:50%;
     background:rgba(255,255,255,0.92);border:1px solid #000;color:#000;
@@ -268,6 +269,9 @@
     font-size:30px;line-height:1.1;font-weight:600;color:#fff;text-shadow:0 2px 7px rgba(0,0,0,.6);
     pointer-events:none;word-break:break-word;}
   .speak-caption.good{color:#fff;}
+  /* a 33% white wash over the Speak camera (gentler, calmer view) */
+  .speak-wash{position:absolute;inset:0;z-index:2;background:rgba(255,255,255,0.33);pointer-events:none;}
+  .sfs-stage .speak-wash{z-index:2;}
   .type-word{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
     font-size:64px;font-weight:600;color:#BDBDBD;letter-spacing:-1px;}
 
@@ -497,7 +501,7 @@
     padding:8px 18px;font-family:'Apfel Grotezk','Inter',sans-serif;font-size:15px;font-weight:500;color:#000;cursor:pointer;
     background:linear-gradient(90deg,#BcD8FF,#FBEfa0);}
   .pg-stage{position:absolute;inset:0;}
-  .pg-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+  .pg-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);}
   .pg-canvas{position:absolute;inset:0;width:100%;height:100%;}
   .pg-film{position:absolute;inset:0;background:rgba(255,255,255,0.55);z-index:2;pointer-events:none;}
   .pg-caption{position:absolute;left:0;right:0;bottom:120px;text-align:center;font-family:'Apfel Grotezk','Inter',sans-serif;
@@ -2166,7 +2170,7 @@ function render(){
       if(cameraStream && (md==='act'||md==='speak')) mountHolder(0, '.live-slot', {mode:md, skeleton:md==='act', which:'primary'});
       else stopHolderLoop(0);
       stopHolderLoop(1);
-      if(md==='draw'||md==='write') setupTrace(md);
+      if(md==='draw'||md==='write') setupTrace(md,'fs');
       if(md==='speak'){ if(!liveRec && !SPEECH_TAP) startSpeech(); else if(!liveRec) promptTapToSpeak(); }
       if((md==='act'||md==='speak') && !cameraStream && !camStarting && !camErr) startCamera();
       paintWaves();
@@ -2180,8 +2184,11 @@ function render(){
     if(cameraStream && cam[dm]) mountHolder(1, '.live-slot-dual', {mode:dm, skeleton:dm==='act', which:'dual'});
     else stopHolderLoop(1);
     /* trace canvas (only one panel can be draw/write at a time) */
-    if(pm==='draw'||pm==='write') setupTrace(pm);
-    else if(dm==='draw'||dm==='write') setupTrace(dm);
+    /* set up EACH trace panel independently — when both panels are trace modes
+       (e.g. Write + Draw) each needs its own canvas wired, which the old
+       single-setup skipped (that was "Draw not working in dual mode") */
+    if(pm==='draw'||pm==='write') setupTrace(pm,'primary');
+    if(dm==='draw'||dm==='write') setupTrace(dm,'dual');
     /* bring the camera up FIRST if any panel needs it. Starting the mic (Speech)
        and getUserMedia(video) on the same tick makes Chrome abort the recognizer
        ("not-allowed"/"aborted"), which is why Speak failed to load alongside Act
@@ -2492,7 +2499,7 @@ function waveBars(active){
 
 /* ---------------- drawing canvas (single black brush) ---------------- */
 let drawStrokes = [];
-let _mentorPointerUp=null, _studentPointerUp=null;
+let _mentorPointerUp=null, _studentPointerUp=null, _traceEnders={}, _traceWinBound=false;
 function setupDrawCanvas(){
   const canvas = document.getElementById('drawCanvas');
   if(!canvas) return;
@@ -2674,16 +2681,17 @@ function panelInner(mode, which){
       : '<div class="cam-prompt">'+svgIcon('camera',20,'#000')
         +'<button class="ghostbtn" data-action="camera" style="padding:7px 15px;font-size:12px;">Start camera</button></div>';
     return '<div class="speak-stage" data-action="s-speak-start">'+inner
+      + '<div class="speak-wash"></div>'
       + '<button class="hearit-again" data-action="s-hear-mentor">Hear it again</button>'
       + '<div class="speak-caption'+(s.success?' good':'')+'" id="sTranscript">'+esc(cap)+'</div></div>';
   }
   if(mode==='draw'||mode==='write'){
     const tool=s.traceTool||'brush';
-    return '<div class="s-left"><canvas id="tTemplate"></canvas><canvas id="tDraw"></canvas>'
+    return '<div class="s-left"><canvas id="tTemplate_'+which+'"></canvas><canvas id="tDraw_'+which+'"></canvas>'
       + '<div class="trace-tools">'
-      +   '<button class="ttool '+(tool==='brush'?'on':'')+'" data-action="s-trace-brush" title="Brush">'+svgIcon('brush',18,'#000')+'</button>'
-      +   '<button class="ttool '+(tool==='eraser'?'on':'')+'" data-action="s-trace-erase" title="Erase">'+svgIcon('eraser',18,'#000')+'</button>'
-      +   '<button class="ttool" data-action="s-trace-reset" title="Reset canvas">'+svgIcon('reset',18,'#000')+'</button>'
+      +   '<button class="ttool '+(tool==='brush'?'on':'')+'" data-action="s-trace-brush" data-which="'+which+'" title="Brush">'+svgIcon('brush',18,'#000')+'</button>'
+      +   '<button class="ttool '+(tool==='eraser'?'on':'')+'" data-action="s-trace-erase" data-which="'+which+'" title="Erase">'+svgIcon('eraser',18,'#000')+'</button>'
+      +   '<button class="ttool" data-action="s-trace-reset" data-which="'+which+'" title="Reset canvas">'+svgIcon('reset',18,'#000')+'</button>'
       + '</div></div>';
   }
   /* type */
@@ -2851,11 +2859,12 @@ function renderStudentFS(){
     cam=true;
     const capt = s.speakCaption || 'Speak now\u2026';
     stageInner = (cameraStream ? '<div class="live-slot" style="position:absolute;inset:0;"></div>' : camPromptHTML())
+      + '<div class="speak-wash"></div>'
       + '<button class="hearit-again" data-action="s-hear-mentor">Hear it again</button>'
       + '<div class="sfs-caption'+(s.success?' good':'')+'" id="sTranscript">'+esc(capt)+'</div>';
   } else if(s.mode==='draw'||s.mode==='write'){
     const tool=s.traceTool||'brush';
-    stageInner = '<canvas id="tTemplate"></canvas><canvas id="tDraw"></canvas>'
+    stageInner = '<canvas id="tTemplate_fs"></canvas><canvas id="tDraw_fs"></canvas>'
       + '<div class="sfs-tools">'
       +   '<button class="ttool '+(tool==='brush'?'on':'')+'" data-action="s-trace-brush" title="Brush">'+svgIcon('brush',20,'#000')+'</button>'
       +   '<button class="ttool '+(tool==='eraser'?'on':'')+'" data-action="s-trace-erase" title="Erase">'+svgIcon('eraser',20,'#000')+'</button>'
@@ -2918,13 +2927,27 @@ function typeChar(k){
   if(!state.student) return;
   const which = whichOf('type'); if(!which) return;
   const e=curTaught(); if(!e) return;
-  if(k==='\u232B' || k==='Backspace') state.student.typed=state.student.typed.slice(0,-1);
-  else if(k==='\u21B5' || k==='Enter'){ finishAttempt(wordScore(state.student.typed, e.w.text)); return; }
-  else if(k===' ' || k==='Spacebar') state.student.typed += ' ';
-  else if(k && k.length===1 && k!=='\u21E7' && k!=='\u263A') state.student.typed += k.toLowerCase();
-  const tgt=(e.w.text||'').toLowerCase(), got=state.student.typed.toLowerCase();
-  setPanelOk(which, got.length>0 && tgt.indexOf(got)===0);   /* borders/music/star update in place */
-  repaintTypeWord();                                          /* word highlight in place, keyboard untouched */
+  const tgt=(e.w.text||'');
+  if(k==='\u232B' || k==='Backspace'){
+    state.student.typed=state.student.typed.slice(0,-1);
+  } else if(k==='\u21B5' || k==='Enter'){
+    /* nothing to finalise \u2014 progress is tracked letter by letter below */
+  } else {
+    const ch = (k===' '||k==='Spacebar') ? ' '
+             : ((k && k.length===1 && k!=='\u21E7' && k!=='\u263A') ? k.toLowerCase() : null);
+    if(ch!==null){
+      /* ONLY the correct next letter is accepted. A wrong key is ignored \u2014 it does
+         NOT fill the next slot (so typing K after "NI" doesn't land where C goes);
+         the slot stays open until the right letter (C) is pressed. */
+      const expected=(tgt[state.student.typed.length]||'').toLowerCase();
+      if(expected && ch===expected) state.student.typed += ch;
+    }
+  }
+  const got=state.student.typed.toLowerCase(), full=tgt.toLowerCase();
+  /* the reward is on the correct path: it plays as each correct letter is added
+     (typed is always a correct prefix now) and completes with the whole word */
+  setPanelOk(which, got.length>0 && full.indexOf(got)===0);
+  repaintTypeWord();   /* word highlight in place, keyboard untouched */
 }
 function keyboardHTML(){
   const inPG = (typeof PG!=='undefined' && PG.open);
@@ -2979,7 +3002,21 @@ function promptTapToSpeak(){
   const el=document.getElementById('sTranscript');
   if(el){ el.textContent='Tap to speak'; el.classList.remove('good'); }
 }
+/* iPad: Speak is the one mode that sounds loud because holding the mic puts iOS
+   on the loud "play-and-record" route. So the first time the student reaches
+   Speak we grab a persistent audio stream and keep it alive — from then on every
+   mode (Act, Draw, Write, Type) rides that same loud route, matching Speak. */
+let _audioBoostStream=null, _audioBoostTried=false;
+function boostAudioIOS(){
+  if(!IS_IOS || _audioBoostStream || _audioBoostTried) return;
+  _audioBoostTried=true;
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  navigator.mediaDevices.getUserMedia({audio:true}).then(function(st){
+    _audioBoostStream=st;   /* kept alive on purpose → loud session for all modes */
+  }).catch(function(){ _audioBoostTried=false; });
+}
 function startSpeech(){
+  boostAudioIOS();
   const C=window.SpeechRecognition||window.webkitSpeechRecognition;
   const e=curTaught(); if(!e) return;
   /* avoid tight restart loops if the mic is denied or unavailable */
@@ -3076,8 +3113,10 @@ function clearTraceForWordSwitch(){
   });
   state.student._traceSnap_draw=null;   /* legacy keys, harmless to clear */
   state.student._traceSnap_write=null;
-  const d=document.getElementById('tDraw');
-  if(d){ try{ const c=d.getContext('2d'); c.clearRect(0,0,d.width,d.height); }catch(e){} }
+  ['primary','dual','fs'].forEach(function(w){
+    const d=document.getElementById('tDraw_'+w);
+    if(d){ try{ const c=d.getContext('2d'); c.clearRect(0,0,d.width,d.height); }catch(e){} }
+  });
 }
 function paintToolbar(){
   const tool=state.student.traceTool||'brush';
@@ -3100,8 +3139,9 @@ function inkStageFor(mode){
   if(!c){ c=document.createElement('canvas'); c.width=STAGE_W; c.height=STAGE_H; state.student[key]=c; }
   return c;
 }
-function setupTrace(modeArg){
-  const t=document.getElementById('tTemplate'), d=document.getElementById('tDraw');
+function setupTrace(modeArg, whichArg){
+  const which = whichArg || whichOf(modeArg) || 'primary';
+  const t=document.getElementById('tTemplate_'+which), d=document.getElementById('tDraw_'+which);
   if(!t||!d) return;
   const box=t.parentElement, dpr=window.devicePixelRatio||1;
   const W=box.clientWidth, H=box.clientHeight;
@@ -3261,7 +3301,9 @@ function setupTrace(modeArg){
     ic.beginPath(); ic.moveTo(x0,y0); ic.lineTo(x1,y1); ic.stroke();
   }
 
-  const traceWhich = whichOf(mode) || 'primary';
+  /* the canvas id suffix is `which` (primary/dual/fs); success is credited to the
+     real panel — fullscreen maps back to the primary panel */
+  const traceWhich = whichOf(mode) || (which==='fs' ? 'primary' : which);
   d.onpointerdown=function(ev){ ev.preventDefault();
     try{ d.setPointerCapture(ev.pointerId); }catch(e){}
     snapshot(); drawing=true; any=true; last=pos(ev);
@@ -3273,11 +3315,15 @@ function setupTrace(modeArg){
     const p=pos(ev); paintSeg(last[0],last[1],p[0],p[1]); last=p; blitInk();
     setPanelOk(traceWhich, state.student.traceTool!=='eraser' && onTemplate(p[0],p[1]));
   };
-  if(_studentPointerUp) window.removeEventListener('pointerup', _studentPointerUp);
-  _studentPointerUp=function(){ if(drawing){ drawing=false; setPanelOk(traceWhich, false); } };
-  window.addEventListener('pointerup', _studentPointerUp);
-  d.onpointerup=function(ev){ try{ d.releasePointerCapture(ev.pointerId); }catch(e){} _studentPointerUp(); };
-  d.onpointercancel=function(){ _studentPointerUp(); };
+  /* each trace panel registers its own end-callback so two panels (e.g. Write +
+     Draw) don't clobber one shared window listener — one window handler ends
+     whichever panels have a stroke in progress */
+  _traceEnders[which]=function(){ if(drawing){ drawing=false; setPanelOk(traceWhich, false); } };
+  if(!_traceWinBound){ _traceWinBound=true;
+    window.addEventListener('pointerup', function(){ Object.keys(_traceEnders).forEach(function(k){ try{ _traceEnders[k](); }catch(e){} }); });
+  }
+  d.onpointerup=function(ev){ try{ d.releasePointerCapture(ev.pointerId); }catch(e){} _traceEnders[which](); };
+  d.onpointercancel=function(){ _traceEnders[which](); };
 
   d._clear=function(){ ic.clearRect(0,0,STAGE_W,STAGE_H); any=false; history.length=0; blitInk(); };
   d._snapshot=function(){ /* ink already persists in the stage canvas */ };
@@ -3510,7 +3556,7 @@ function act(a, el){
   if(a==='s-panel-try'){
     const which=el.dataset.which, m=el.dataset.m;
     if(m==='act'||m==='speak'){ if(!cameraStream) startCamera(); if(m==='speak') startSpeech(); }
-    else if(m==='draw'||m==='write'){ const c=document.getElementById('tDraw'); if(c&&c._score) setPanelOk(which, c._score()>=55); }
+    else if(m==='draw'||m==='write'){ const c=document.getElementById('tDraw_'+(state.student.fs?'fs':which)); if(c&&c._score) setPanelOk(which, c._score()>=55); }
     else if(m==='type'){ const e=curTaught(); if(e) setPanelOk(which, wordScore(state.student.typed, e.w.text)>=70); }
     return;
   }
@@ -3552,9 +3598,10 @@ function act(a, el){
   if(a==='s-trace-brush'){ state.student.traceTool='brush'; paintToolbar(); return; }
   if(a==='s-trace-erase'){ state.student.traceTool='eraser'; paintToolbar(); return; }
   if(a==='s-trace-reset'){
-    const c=document.getElementById('tDraw');
+    const which = (state.student.fs?'fs':(el.dataset.which||'primary'));
+    const c=document.getElementById('tDraw_'+which);
     if(c&&c._clear) c._clear();
-    setPanelOk(whichOf('draw')||whichOf('write')||'primary', false);
+    setPanelOk(el.dataset.which||whichOf('draw')||whichOf('write')||'primary', false);
     return;
   }
   if(a==='gen-menu'){ state.genMenuOpen=!state.genMenuOpen; render(); return; }
