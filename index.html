@@ -95,8 +95,12 @@
      the folder is held in from the edges enough that its corners never slide
      under them. */
   @media (pointer:coarse) and (min-width:700px){
-    .stage{max-width:min(1240px, max(600px, calc(100vw - 340px)));}
-    body{padding-top:64px;padding-bottom:96px;}
+    /* make the folder as large as possible but cap it by HEIGHT (width follows
+       the 1145:647 aspect) so ~95px clear above and below leaves the top bar and
+       the bottom logo / Save Session untouched, while it still spans most widths */
+    .stage{max-width:min(1240px, calc((100vh - 190px) * 1.769));}
+    .stage{max-width:min(1240px, calc((100dvh - 190px) * 1.769));}
+    body{padding:20px 16px;}
   }
   .folder{position:relative;width:100%;aspect-ratio:1145/647;}
   .folder-svg{position:absolute;inset:0;width:100%;height:100%;}
@@ -170,18 +174,16 @@
 
   /* gesture */
   .video-box{position:absolute;border:1.05732px solid #000;border-radius:7.93px;overflow:hidden;background:#D9D3C0;}
-  .video-inner{position:absolute;inset:0;transform:scaleX(-1);}
+  /* Camera is shown UN-mirrored (natural orientation) everywhere — no scaleX.
+     Removing the transform also fixes iOS Safari, which won't apply object-fit to
+     a <video> inside a CSS-transformed ancestor (that bug made the camera show at
+     its native size in a corner while the skeleton filled the box). */
+  .video-inner{position:absolute;inset:0;}
   .video-inner video,.video-inner canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
-  /* iOS Safari won't apply object-fit to a <video> that is still display:inline
-     or that sits inside a CSS-transformed ancestor — the result is the camera
-     showing at its native size in a corner while the skeleton canvas fills the
-     box. Force both the video and the skeleton to fill by id, carry the mirror
-     on the elements themselves (not the parent), so they stay perfectly aligned. */
-  .video-inner{transform:none;}
   #liveVideo,#liveCanvas,#liveVideo1,#liveCanvas1{
     position:absolute !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;
     width:100% !important;height:100% !important;object-fit:cover !important;display:block !important;
-    transform:scaleX(-1) !important;}
+    transform:none !important;}
   .video-badge{
     position:absolute;left:8px;top:8px;width:26px;height:26px;border-radius:50%;
     background:rgba(255,255,255,0.92);border:1px solid #000;color:#000;
@@ -242,7 +244,7 @@
 
   .scard{position:absolute;background:#fff;border:1px solid #000;border-radius:16px;}
   .s-left{position:absolute;background:#fff;border:1px solid #000;border-radius:11.5px;overflow:hidden;}
-  .s-left .video-inner{position:absolute;inset:0;transform:scaleX(-1);}
+  .s-left .video-inner{position:absolute;inset:0;}
   .s-left video,.s-left canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
   .s-left .cam-prompt{position:absolute;inset:0;display:flex;flex-direction:column;
     align-items:center;justify-content:center;gap:10px;color:#555;}
@@ -253,7 +255,7 @@
   .tl{transition:color .12s;}
   .tl.ok{font-weight:700;}
   .speak-stage{position:absolute;inset:0;border-radius:11.5px;overflow:hidden;background:#000;}
-  .speak-stage .video-inner{position:absolute;inset:0;transform:scaleX(-1);}
+  .speak-stage .video-inner{position:absolute;inset:0;}
   .speak-stage video,.speak-stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
   .speak-stage .cam-prompt{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
     justify-content:center;gap:10px;color:#eee;background:#333;}
@@ -283,7 +285,8 @@
   .kbd-row{display:flex;justify-content:center;gap:6px;}
   .kbd-k{background:#fff;border:1px solid #000;border-radius:8px;font-size:17px;color:#000;
     cursor:pointer;padding:0;font-family:'Apfel Grotezk','Inter',sans-serif;width:34px;height:34px;
-    display:flex;align-items:center;justify-content:center;transition:background .1s;}
+    display:flex;align-items:center;justify-content:center;transition:background .1s;
+    touch-action:manipulation;-webkit-user-select:none;user-select:none;}
   .kbd-k.hi{font-family:'Noto Sans Devanagari',sans-serif;font-size:16px;}
   .kbd-k:hover{background:var(--tabon,#FFF0A3);}
   .kbd-k:active{background:#0074FF;color:#fff;}
@@ -494,7 +497,7 @@
     padding:8px 18px;font-family:'Apfel Grotezk','Inter',sans-serif;font-size:15px;font-weight:500;color:#000;cursor:pointer;
     background:linear-gradient(90deg,#BcD8FF,#FBEfa0);}
   .pg-stage{position:absolute;inset:0;}
-  .pg-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);}
+  .pg-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
   .pg-canvas{position:absolute;inset:0;width:100%;height:100%;}
   .pg-film{position:absolute;inset:0;background:rgba(255,255,255,0.55);z-index:2;pointer-events:none;}
   .pg-caption{position:absolute;left:0;right:0;bottom:120px;text-align:center;font-family:'Apfel Grotezk','Inter',sans-serif;
@@ -548,7 +551,7 @@
   .sfs-stage{position:absolute;inset:20px;border:1.5px solid #000;border-radius:22px;
     overflow:hidden;background:#fff;}
   .sfs-stage.cam{background:#000;}
-  .sfs-stage .video-inner{position:absolute;inset:0;transform:scaleX(-1);}
+  .sfs-stage .video-inner{position:absolute;inset:0;}
   .sfs-stage .video-inner video,.sfs-stage .video-inner canvas{position:absolute;inset:0;
     width:100%;height:100%;object-fit:cover;}
   .sfs-stage>canvas{position:absolute;inset:0;width:100%;height:100%;}
@@ -864,8 +867,13 @@ function ensureSilentEl(){
   return _silentEl;
 }
 function unlockAudio(){
-  /* (re)play the silent keep-alive on every gesture — one play can be dropped if
-     iOS backgrounded the tab, so this is not guarded by _iosUnlocked */
+  /* iOS 16.4+: declare the page's audio as "playback" media — this is the direct,
+     sanctioned way to put ALL Web Audio on the loud, mute-switch-independent media
+     channel, so every mode is as loud as Speak mode (which only got there because
+     holding the mic forced the same category). Re-asserted each gesture. */
+  try{ if(navigator.audioSession){ navigator.audioSession.type='playback'; } }catch(e){}
+  /* older iOS fallback: (re)play the silent keep-alive on every gesture — one play
+     can be dropped if iOS backgrounded the tab, so this is not guarded */
   if(IS_IOS){ const a=ensureSilentEl(); if(a && a.paused){ a.play().catch(function(){}); } }
   if(_iosUnlocked) return; _iosUnlocked=true;
   try{
@@ -1163,7 +1171,7 @@ function chime(k){
 /* iPad runs the lighter pose model at a lower frame rate, so its landmarks are
    noisier and arrive slower — fewer frames are needed to confirm a hold, and the
    thresholds below are a touch more forgiving so a real gesture isn't missed. */
-const HOLD_FRAMES=IS_IOS?2:3, RELEASE_FRAMES=14, LIVE_SMOOTH=5, MARGIN=0.012;
+const HOLD_FRAMES=3, RELEASE_FRAMES=12, LIVE_SMOOTH=4, MARGIN=0.016;
 let liveRec=null, speakTimer=null;
 let liveBuf=[], holdCount=0, releaseCount=0, gestureHeld=false;
 let modelCache={}, modelKey='';
@@ -1194,7 +1202,7 @@ function liveMatch(frame, entry){
   /* a confident match for THIS word counts even if another gesture is nearby,
      so similar words don't cancel each other out and the student isn't left
      repeating a correct gesture that never registers */
-  if(dMine <= mine.thresh*0.82) return true;
+  if(dMine <= mine.thresh*0.78) return true;
   let bestOther=9;
   Object.keys(models).forEach(function(k){
     if(parseInt(k,10)===entry.i) return;
@@ -1673,8 +1681,12 @@ async function startCamera(){
     cameraStream = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480},audio:false});
     if(!poseModel){
       poseModel = new window.Holistic({locateFile:function(f){return 'https://cdn.jsdelivr.net/npm/@mediapipe/holistic/'+f;}});
-      poseModel.setOptions({modelComplexity:1, smoothLandmarks:true, refineFaceLandmarks:true,
-                            minDetectionConfidence:0.6, minTrackingConfidence:0.6});
+      /* complexity 2 gives markedly better finger / facial-expression / body
+         landmarks. The live camera stays smooth (it's a plain <video>); only the
+         skeleton + recognition sampling runs a little slower, which is a fair
+         trade for accuracy the mentor/student can actually rely on. */
+      poseModel.setOptions({modelComplexity:2, smoothLandmarks:true, refineFaceLandmarks:true,
+                            minDetectionConfidence:0.5, minTrackingConfidence:0.5});
       poseModel.onResults(function(r){ lastResults = r; });
     }
   }catch(e){ camErr = e.message||'Camera unavailable.'; cameraStream=null; }
@@ -1936,7 +1948,7 @@ function refModel(word){
   /* a little more headroom than before (floor + multiplier raised) so a gesture
      that is clearly the right one, but slightly off from the recorded takes,
      still registers — this is the main cause of "it won't recognise me" */
-  return {sigs:sigs, thresh: Math.min(0.70, Math.max(0.30, intra*3.4))};
+  return {sigs:sigs, thresh: Math.min(0.60, Math.max(0.26, intra*3.1))};
 }
 function modelDist(model, live){
   if(!model||!live) return 9;
@@ -2889,6 +2901,19 @@ const KB_HI=[['\u0915','\u0916','\u0917','\u0918','\u091a','\u091b','\u091c','\u
              ['\u0921','\u0922','\u0923','\u0924','\u0925','\u0926','\u0927','\u0928','\u092a'],
              ['\u092b','\u092c','\u092d','\u092e','\u092f','\u0930','\u0932','\u0935','\u0938','\u0939'],
              ['\u093e','\u093f','\u0940','\u0941','\u0942','\u0947','\u0948','\u094b','\u094c','\u094d']];
+/* repaint just the Type word (per-letter highlight) in place \u2014 avoids rebuilding
+   the on-screen keyboard on every keystroke, which is what made Type feel dead on
+   iPad (a full re-render between taps). */
+function repaintTypeWord(){
+  const e=curTaught(); if(!e||!state.student) return;
+  const tgt=(e.w.text||''), typed=(state.student.typed||''), col=pal(modeDef('type').color);
+  let lit='';
+  for(let i=0;i<tgt.length;i++){
+    const ok=i<typed.length && typed[i].toLowerCase()===tgt[i].toLowerCase();
+    lit += '<span class="tl'+(ok?' ok':'')+'"'+(ok?' style="color:'+col+'"':'')+'>'+esc(tgt[i])+'</span>';
+  }
+  document.querySelectorAll('.s-typeword,.sfs-typeword').forEach(function(el){ el.innerHTML=lit; });
+}
 function typeChar(k){
   if(!state.student) return;
   const which = whichOf('type'); if(!which) return;
@@ -2898,8 +2923,8 @@ function typeChar(k){
   else if(k===' ' || k==='Spacebar') state.student.typed += ' ';
   else if(k && k.length===1 && k!=='\u21E7' && k!=='\u263A') state.student.typed += k.toLowerCase();
   const tgt=(e.w.text||'').toLowerCase(), got=state.student.typed.toLowerCase();
-  setPanelOk(which, got.length>0 && tgt.indexOf(got)===0);
-  render();
+  setPanelOk(which, got.length>0 && tgt.indexOf(got)===0);   /* borders/music/star update in place */
+  repaintTypeWord();                                          /* word highlight in place, keyboard untouched */
 }
 function keyboardHTML(){
   const inPG = (typeof PG!=='undefined' && PG.open);
