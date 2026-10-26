@@ -879,6 +879,10 @@ function unlockAudio(){
   /* older iOS fallback: (re)play the silent keep-alive on every gesture — one play
      can be dropped if iOS backgrounded the tab, so this is not guarded */
   if(IS_IOS){ const a=ensureSilentEl(); if(a && a.paused){ a.play().catch(function(){}); } }
+  /* iPad: once the student is in a session, hold a mic so EVERY mode is as loud as
+     Speak (Speak was only loud because it holds the mic). Re-ensured each gesture,
+     so if leaving Speak drops the session it comes right back on the next tap. */
+  try{ if(IS_IOS && typeof state!=='undefined' && state && state.mode==='student'){ boostAudioIOS(); } }catch(e){}
   if(_iosUnlocked) return; _iosUnlocked=true;
   try{
     const c=ac();
@@ -1206,7 +1210,7 @@ function liveMatch(frame, entry){
   /* a confident match for THIS word counts even if another gesture is nearby,
      so similar words don't cancel each other out and the student isn't left
      repeating a correct gesture that never registers */
-  if(dMine <= mine.thresh*0.78) return true;
+  if(dMine <= mine.thresh*0.85) return true;
   let bestOther=9;
   Object.keys(models).forEach(function(k){
     if(parseInt(k,10)===entry.i) return;
@@ -1685,11 +1689,11 @@ async function startCamera(){
     cameraStream = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480},audio:false});
     if(!poseModel){
       poseModel = new window.Holistic({locateFile:function(f){return 'https://cdn.jsdelivr.net/npm/@mediapipe/holistic/'+f;}});
-      /* complexity 2 gives markedly better finger / facial-expression / body
-         landmarks. The live camera stays smooth (it's a plain <video>); only the
-         skeleton + recognition sampling runs a little slower, which is a fair
-         trade for accuracy the mentor/student can actually rely on. */
-      poseModel.setOptions({modelComplexity:2, smoothLandmarks:true, refineFaceLandmarks:true,
+      /* complexity 1: on iPad, complexity 2 is so heavy the results barely update
+         (recognition then has almost nothing to work with — "it can't tell any
+         gesture"). Complexity 1 tracks reliably at a usable frame rate, which is
+         what recognition actually needs. */
+      poseModel.setOptions({modelComplexity:1, smoothLandmarks:true, refineFaceLandmarks:true,
                             minDetectionConfidence:0.5, minTrackingConfidence:0.5});
       poseModel.onResults(function(r){ lastResults = r; });
     }
@@ -1952,7 +1956,7 @@ function refModel(word){
   /* a little more headroom than before (floor + multiplier raised) so a gesture
      that is clearly the right one, but slightly off from the recorded takes,
      still registers — this is the main cause of "it won't recognise me" */
-  return {sigs:sigs, thresh: Math.min(0.60, Math.max(0.26, intra*3.1))};
+  return {sigs:sigs, thresh: Math.min(0.78, Math.max(0.42, intra*2.8))};
 }
 function modelDist(model, live){
   if(!model||!live) return 9;
@@ -2928,25 +2932,27 @@ function typeChar(k){
   const which = whichOf('type'); if(!which) return;
   const e=curTaught(); if(!e) return;
   const tgt=(e.w.text||'');
+  let wrong=false;
   if(k==='\u232B' || k==='Backspace'){
     state.student.typed=state.student.typed.slice(0,-1);
   } else if(k==='\u21B5' || k==='Enter'){
-    /* nothing to finalise \u2014 progress is tracked letter by letter below */
+    /* nothing to finalise \u2014 progress is tracked letter by letter */
   } else {
     const ch = (k===' '||k==='Spacebar') ? ' '
              : ((k && k.length===1 && k!=='\u21E7' && k!=='\u263A') ? k.toLowerCase() : null);
     if(ch!==null){
-      /* ONLY the correct next letter is accepted. A wrong key is ignored \u2014 it does
-         NOT fill the next slot (so typing K after "NI" doesn't land where C goes);
-         the slot stays open until the right letter (C) is pressed. */
+      /* ONLY the correct next letter advances. A wrong key does NOT fill the next
+         slot (typing K after "NI" doesn't land where C goes) \u2014 the slot stays open
+         until the right letter is pressed, and the wrong key momentarily stops the
+         music, which resumes the instant the correct next letter is typed. */
       const expected=(tgt[state.student.typed.length]||'').toLowerCase();
       if(expected && ch===expected) state.student.typed += ch;
+      else wrong=true;
     }
   }
   const got=state.student.typed.toLowerCase(), full=tgt.toLowerCase();
-  /* the reward is on the correct path: it plays as each correct letter is added
-     (typed is always a correct prefix now) and completes with the whole word */
-  setPanelOk(which, got.length>0 && full.indexOf(got)===0);
+  /* wrong letter \u2192 stop; otherwise play while on the correct path (and complete) */
+  setPanelOk(which, !wrong && got.length>0 && full.indexOf(got)===0);
   repaintTypeWord();   /* word highlight in place, keyboard untouched */
 }
 function keyboardHTML(){
@@ -3006,14 +3012,19 @@ function promptTapToSpeak(){
    on the loud "play-and-record" route. So the first time the student reaches
    Speak we grab a persistent audio stream and keep it alive — from then on every
    mode (Act, Draw, Write, Type) rides that same loud route, matching Speak. */
-let _audioBoostStream=null, _audioBoostTried=false;
+let _audioBoostStream=null, _audioBoostBusy=false;
 function boostAudioIOS(){
-  if(!IS_IOS || _audioBoostStream || _audioBoostTried) return;
-  _audioBoostTried=true;
+  if(!IS_IOS || _audioBoostBusy) return;
+  /* still holding a live mic track? the loud session is already active */
+  if(_audioBoostStream){
+    const t=_audioBoostStream.getAudioTracks && _audioBoostStream.getAudioTracks()[0];
+    if(t && t.readyState==='live') return;
+  }
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  _audioBoostBusy=true;
   navigator.mediaDevices.getUserMedia({audio:true}).then(function(st){
-    _audioBoostStream=st;   /* kept alive on purpose → loud session for all modes */
-  }).catch(function(){ _audioBoostTried=false; });
+    _audioBoostStream=st; _audioBoostBusy=false;   /* kept alive → loud session for ALL modes */
+  }).catch(function(){ _audioBoostBusy=false; });
 }
 function startSpeech(){
   boostAudioIOS();
